@@ -527,3 +527,110 @@ class ComprehensiveDataCollector:
         self.print_dataset_statistics()
         
         return final_dataset
+
+    def generate_synthetic_scenarios(self, num_scenarios: int) -> List[Dict]:
+        """Generate synthetic market scenarios for data augmentation"""
+        logger.info(f"🔄 Generating {num_scenarios} synthetic market scenarios...")
+        synthetic_examples = []
+
+        for i in tqdm(range(num_scenarios), desc="Generating synthetic scenarios"):
+            try:
+                # 1. Select a random market condition
+                condition = np.random.choice([
+                    "sudden_volatility_spike",
+                    "strong_uptrend",
+                    "ranging_market",
+                    "liquidity_grab",
+                    "news_driven_pump"
+                ])
+
+                # 2. Create a detailed instruction based on the condition
+                instruction_prompt = f"""
+                Analyze the following synthetic market scenario for BTC/USDT and provide a detailed trading plan.
+
+                Scenario: {condition.replace('_', ' ').title()}
+
+                Describe the key characteristics of this scenario, what indicators to watch, and a potential scalping strategy with entry, exit, and stop-loss levels.
+                Focus on high-leverage futures trading.
+                """
+
+                instruction = self.generate_llm_response(instruction_prompt, max_tokens=200)
+                if not instruction:
+                    continue
+
+                # 3. Generate a corresponding expert response
+                response_prompt = f"""
+                As an expert algorithmic trader, provide a detailed response to the following trading instruction:
+
+                Instruction: {instruction}
+
+                Your response should be a comprehensive guide on how to trade this scenario, including risk management specific to high-leverage scalping.
+                """
+
+                response = self.generate_llm_response(response_prompt, max_tokens=800)
+                if not response:
+                    continue
+
+                # 4. Quality evaluation
+                self.dataset_stats['total_collected'] += 1
+                is_high_quality, quality_metrics = self.evaluate_data_quality(instruction, response)
+
+                if is_high_quality:
+                    example = {
+                        "instruction": instruction.strip(),
+                        "response": response.strip(),
+                        "category": "synthetic_scenario",
+                        "bot_name": BOT_NAME,
+                        "quality_score": quality_metrics['overall_score'],
+                        "generated_at": datetime.now().isoformat(),
+                        "prompt_variation": 0
+                    }
+                    synthetic_examples.append(example)
+                    self.dataset_stats['quality_passed'] += 1
+                    self.dataset_stats['text_only_examples'] += 1
+                else:
+                    self.dataset_stats['low_quality_filtered'] += 1
+
+                time.sleep(0.5)
+
+            except Exception as e:
+                logger.error(f"Error generating synthetic scenario: {e}")
+                continue
+
+        logger.info(f"✅ Generated {len(synthetic_examples)} high-quality synthetic examples")
+        return synthetic_examples
+
+    def final_quality_filter(self, dataset: List[Dict]) -> List[Dict]:
+        """Perform final quality filtering and deduplication"""
+
+        # Simple deduplication based on instruction
+        unique_instructions = set()
+        deduplicated_dataset = []
+
+        for example in dataset:
+            instruction = example['instruction']
+            if instruction not in unique_instructions:
+                unique_instructions.add(instruction)
+                deduplicated_dataset.append(example)
+
+        self.dataset_stats['duplicates_removed'] = len(dataset) - len(deduplicated_dataset)
+
+        # Further filtering can be added here if needed
+
+        return deduplicated_dataset
+
+    def print_dataset_statistics(self):
+        """Print final dataset statistics"""
+        logger.info("\n" + "="*50)
+        logger.info("📊 Final Dataset Statistics")
+        logger.info("="*50)
+
+        for key, value in self.dataset_stats.items():
+            logger.info(f"{key.replace('_', ' ').title():<25}: {value}")
+
+        total_generated = self.dataset_stats.get('total_collected', 0)
+        if total_generated > 0:
+            pass_rate = (self.dataset_stats.get('quality_passed', 0) / total_generated) * 100
+            logger.info(f"{'Quality Pass Rate':<25}: {pass_rate:.2f}%")
+
+        logger.info("="*50 + "\n")
